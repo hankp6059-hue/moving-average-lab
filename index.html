@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>美人蕉降噪实验</title>
+<meta name="description" content="实验 1：在自摄的美人蕉照片上对比高斯、中值、双边三种传统滤波的降噪效果，实时计算 PSNR 与 SSIM。">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;800&family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: lab notebook — a sticky photo viewer on the left, the knobs and the score table on the right, conclusions and reproduction below */
+:root {
+  --bg: #f5f4ef;
+  --surface: #ffffff;
+  --surface-2: #eeece4;
+  --ink: #1d1f1a;
+  --muted: #62665c;
+  --line: #dcd9cd;
+  --accent: #d2601a;
+  --accent-soft: #fbeadd;
+  --good: #2f7d4f;
+  --detail: #e0472b;
+  --flat: #2f6fd0;
+  --code-bg: #faf9f5;
+  --f-display: "Noto Serif SC", "Songti SC", "STSong", serif;
+  --f-body: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --f-mono: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131510; --surface: #1b1d18; --surface-2: #24271f; --ink: #e8e8e0; --muted: #a2a697;
+    --line: #33372d; --accent: #f08a45; --accent-soft: #3a2616; --good: #6cc790; --detail: #ff7a5c;
+    --flat: #78a8ff; --code-bg: #171914; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131510; --surface: #1b1d18; --surface-2: #24271f; --ink: #e8e8e0; --muted: #a2a697;
+  --line: #33372d; --accent: #f08a45; --accent-soft: #3a2616; --good: #6cc790; --detail: #ff7a5c;
+  --flat: #78a8ff; --code-bg: #171914; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.7; }
+.wrap { max-width: 1240px; margin: 0 auto; padding-block: 40px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 48px; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; line-height: 1.3; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 46px); font-weight: 800; letter-spacing: 0.02em; }
+h2 { font-size: 24px; font-weight: 800; }
+h3 { font-size: 17px; font-weight: 600; }
+p { margin: 0; }
+code { font-family: var(--f-mono); font-size: 0.88em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.eyebrow { font-family: var(--f-mono); font-size: 12px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); }
+header { display: grid; gap: 12px; max-width: 74ch; }
+header p { color: var(--muted); font-size: 16px; }
+.byline { font-size: 13px; color: var(--muted); }
+section { display: grid; gap: 18px; min-width: 0; }
+.sec-head { display: grid; gap: 6px; max-width: 74ch; }
+.sec-head p { color: var(--muted); }
+
+.lab { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 24px; align-items: start; }
+.viewer-col { position: sticky; top: 16px; display: grid; gap: 10px; min-width: 0; }
+.side { display: grid; gap: 16px; min-width: 0; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 12px; min-width: 0; }
+.panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.panel-head small { color: var(--muted); font-size: 12px; font-family: var(--f-mono); }
+.row { display: flex; flex-wrap: wrap; gap: 10px 22px; align-items: flex-end; }
+.ctl { display: grid; gap: 4px; min-width: 150px; flex: 1 1 160px; }
+.ctl label, .lbl { font-size: 13px; color: var(--muted); display: flex; justify-content: space-between; gap: 8px; }
+.ctl output { font-family: var(--f-mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+input[type="number"], select { font: inherit; font-size: 14px; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+input[type="number"] { width: 90px; font-family: var(--f-mono); }
+.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface-2); }
+.seg button { font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--ink); padding: 4px 12px; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--surface); }
+button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn { font: inherit; font-size: 13px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); padding: 5px 12px; border-radius: 8px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+
+/* viewer */
+.vbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; font-size: 13px; color: var(--muted); }
+.vbar label { display: inline-flex; gap: 6px; align-items: center; }
+.viewport { position: relative; overflow: auto; max-height: min(78vh, 900px); border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); overscroll-behavior: contain; }
+.stage { position: relative; width: 100%; }
+.stage canvas { display: block; width: 100%; height: auto; image-rendering: auto; }
+.stage.pixel canvas { image-rendering: pixelated; }
+#cR { position: absolute; inset: 0; }
+.divider { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.35); pointer-events: none; }
+.knob { position: sticky; top: 45%; width: 34px; height: 34px; margin-left: -18px; border-radius: 50%; background: #fff; color: #222; box-shadow: 0 1px 4px rgba(0,0,0,.4); display: grid; place-items: center; font-size: 14px; pointer-events: auto; cursor: ew-resize; touch-action: none; user-select: none; }
+.tag { position: absolute; top: 8px; font-size: 12px; padding: 1px 8px; border-radius: 999px; background: rgba(0,0,0,.6); color: #fff; pointer-events: none; }
+.tag.l { left: 8px; } .tag.r { right: 8px; }
+.busy { position: absolute; inset: 0; display: none; place-items: center; background: color-mix(in srgb, var(--bg) 55%, transparent); font-size: 14px; color: var(--ink); }
+.busy.on { display: grid; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--c); vertical-align: -1px; margin-right: 5px; }
+
+/* metrics */
+.tbl { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { font-size: 12px; color: var(--muted); font-weight: 500; }
+th.num, td.num { text-align: right; }
+td.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+td.best { color: var(--accent); font-weight: 600; }
+td .py { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--surface-2); }
+tbody tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+.note { font-size: 13px; color: var(--muted); }
+.ok { color: var(--good); }
+.status { font-family: var(--f-mono); font-size: 12px; color: var(--muted); }
+
+.findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.finding { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; background: var(--surface); display: grid; gap: 6px; align-content: start; }
+.finding p { font-size: 14px; color: var(--muted); }
+.finding .btn { justify-self: start; }
+.callout { border-left: 3px solid var(--accent); padding: 4px 0 4px 14px; max-width: 74ch; font-size: 16px; }
+
+.code { position: relative; min-width: 0; }
+.code pre { margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; padding: 16px; overflow-x: auto; font-family: var(--f-mono); font-size: 13px; line-height: 1.6; }
+.code .copy { position: absolute; top: 8px; right: 8px; font-size: 12px; padding: 3px 10px; }
+footer { color: var(--muted); font-size: 13px; }
+
+@media (max-width: 920px) {
+  .lab { grid-template-columns: 1fr; }
+  .viewer-col { position: static; }
+  .viewport { max-height: 70vh; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="eyebrow">降噪实验 · 实验 1</span>
+    <h1>美人蕉降噪实验：三种传统滤波对比</h1>
+    <p>用手机拍的一张美人蕉照片，转成灰度后加上 σ=25 的高斯噪声，再分别用高斯滤波、中值滤波、双边滤波去噪，用 PSNR 和 SSIM 打分。所有计算都在浏览器里实时完成，可以随意调参数，也可以换成你自己的照片。</p>
+    <p class="byline">秦靖涵 · 中山大学物理系 · 2026 年 10 月</p>
+  </header>
+
+  <section>
+    <div class="lab">
+      <div class="viewer-col">
+        <div class="vbar">
+          <label>左 <select id="selL" aria-label="左边显示"></select></label>
+          <label>右 <select id="selR" aria-label="右边显示"></select></label>
+          <div class="seg" id="zoomSeg" role="group" aria-label="放大倍数">
+            <button data-v="1">适应</button><button data-v="2">2×</button><button data-v="4">4×</button>
+          </div>
+        </div>
+        <div class="viewport" id="viewport">
+          <div class="stage" id="stage">
+            <canvas id="cL" aria-label="左侧图像"></canvas>
+            <canvas id="cR" aria-label="右侧图像"></canvas>
+            <div class="divider" id="divider"><div class="knob" id="knob" aria-hidden="true">⇔</div></div>
+          </div>
+          <span class="tag l" id="tagL"></span><span class="tag r" id="tagR"></span>
+          <div class="busy" id="busy">计算中…</div>
+        </div>
+        <input type="range" id="split" min="0" max="100" step="0.5" value="50" aria-label="分界线位置">
+        <div class="legend" id="regionLegend" hidden><span style="--c: var(--detail)">细节区：梯度最大的 20%</span><span style="--c: var(--flat)">平坦区：梯度最小的 50%</span></div>
+      </div>
+
+      <div class="side">
+        <div class="panel">
+          <div class="panel-head"><h3>照片与噪声</h3><small id="imgInfo"></small></div>
+          <div class="row">
+            <div class="ctl"><label for="sigma">高斯噪声 σ <output id="sigmaOut"></output></label><input type="range" id="sigma" min="0" max="60" step="1"></div>
+            <div class="ctl" style="flex: 0 0 auto; min-width: 0"><label for="seed">随机种子</label><input type="number" id="seed" min="0" max="4294967295" step="1"></div>
+          </div>
+          <div class="row" style="align-items:center">
+            <label class="btn" for="file" style="cursor:pointer">换成我的照片…</label>
+            <input type="file" id="file" accept="image/*" hidden>
+            <button class="btn" id="backCanna" hidden>换回美人蕉</button>
+            <span class="note">照片只在你的浏览器里处理，不会上传。</span>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>三种滤波</h3><button class="btn" id="resetParams">恢复实验参数</button></div>
+          <div class="row" id="pGauss"></div>
+          <div class="row" id="pMedian"></div>
+          <div class="row" id="pBilateral"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h3>评分</h3><span class="status" id="status"></span></div>
+          <div class="tbl"><table>
+            <thead><tr><th>方法</th><th class="num">PSNR</th><th class="num">SSIM</th><th class="num">细节区 PSNR</th><th class="num">平坦区 PSNR</th></tr></thead>
+            <tbody id="tbody"></tbody>
+          </table></div>
+          <p class="note" id="pyNote"></p>
+          <p class="note">PSNR 单位 dB，越高越好；SSIM 最高为 1。每列最好的结果标成橙色。点一行可以在右侧查看那种方法的输出。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">结论</span>
+      <h2>看起来干净，不等于细节真实</h2>
+    </div>
+    <p class="callout">双边滤波的 SSIM 最高（0.821），平坦区也最干净；但在梯度最大的 20% 像素（花瓣纹路、石板裂缝）上，它的 PSNR 反而最低：26.85 dB，比高斯滤波的 28.37 dB 低了 1.5 dB。</p>
+    <div class="findings" id="findings"></div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <span class="eyebrow">复现</span>
+      <h2>Python 原始代码</h2>
+      <p>仓库里的 <code>denoise_experiment.py</code> 就是原实验代码，网页的默认参数和它完全一致。运行环境：Python 3.13、OpenCV 5.0、scikit-image 0.26。</p>
+    </div>
+    <div class="code"><button class="btn copy" data-target="pyInstall">复制</button><pre id="pyInstall">pip install -r requirements.txt
+python denoise_experiment.py</pre></div>
+    <div class="code"><button class="btn copy" data-target="pyCode">复制</button><pre id="pyCode"></pre></div>
+    <p class="note">网页里的噪声用和 numpy 一样的随机数算法（MT19937 + 极坐标法）生成，种子为 0 时与 <code>np.random.seed(0)</code> 得到的噪声逐像素相同；高斯滤波和中值滤波按 OpenCV 的定点算法实现，结果与 OpenCV 逐像素一致；双边滤波只有极少数像素差 1。SSIM 与 scikit-image 默认设置一致（7×7 均匀窗口）。</p>
+  </section>
+
+  <footer>纯前端实现，没有第三方库，可以直接部署到 GitHub Pages。</footer>
+</div>
+
+<script id="worker-src" type="text/plain">
+'use strict';
+// ---------- numpy legacy RandomState: MT19937 + polar Gaussian ----------
+function makeRng(seed) {
+  const mt = new Uint32Array(624);
+  mt[0] = seed >>> 0;
+  for (let i = 1; i < 624; i++) { const p = mt[i - 1] ^ (mt[i - 1] >>> 30); mt[i] = (Math.imul(1812433253, p) + i) >>> 0; }
+  let idx = 624, hasGauss = false, gauss = 0;
+  function next() {
+    if (idx >= 624) {
+      for (let k = 0; k < 624; k++) {
+        const y = (mt[k] & 0x80000000) | (mt[(k + 1) % 624] & 0x7fffffff);
+        mt[k] = mt[(k + 397) % 624] ^ (y >>> 1) ^ ((y & 1) ? 0x9908b0df : 0);
+      }
+      idx = 0;
+    }
+    let y = mt[idx++];
+    y ^= y >>> 11; y ^= (y << 7) & 0x9d2c5680; y ^= (y << 15) & 0xefc60000; y ^= y >>> 18;
+    return y >>> 0;
+  }
+  const double = () => ((next() >>> 5) * 67108864 + (next() >>> 6)) / 9007199254740992;
+  return function normal() {
+    if (hasGauss) { hasGauss = false; return gauss; }
+    let x1, x2, r2;
+    do { x1 = 2 * double() - 1; x2 = 2 * double() - 1; r2 = x1 * x1 + x2 * x2; } while (r2 >= 1 || r2 === 0);
+    const f = Math.sqrt(-2 * Math.log(r2) / r2);
+    gauss = f * x1; hasGauss = true;
+    return f * x2;
+  };
+}
+// noisy = np.clip(img.astype(np.float32) + np.random.normal(0, sigma, shape), 0, 255).astype(np.uint8)
+function addNoise(img, sigma, seed) {
+  const normal = makeRng(seed), out = new Uint8Array(img.length);
+  for (let i = 0; i < img.length; i++) {
+    const v = img[i] + sigma * normal();
+    out[i] = v <= 0 ? 0 : v >= 255 ? 255 : Math.floor(v);
+  }
+  return out;
+}
+
+// ---------- border helpers ----------
+const refl101 = (i, n) => i < 0 ? -i : (i >= n ? 2 * n - 2 - i : i);   // OpenCV BORDER_REFLECT_101
+const clampI = (i, n) => i < 0 ? 0 : (i >= n ? n - 1 : i);            // BORDER_REPLICATE
+const reflSym = (i, n) => i < 0 ? -i - 1 : (i >= n ? 2 * n - 1 - i : i); // scipy mode="reflect"
+const roundEven = v => { const r = Math.round(v); return (r - v === 0.5 && r % 2 !== 0) ? r - 1 : r; };
+
+// ---------- cv2.GaussianBlur, 8-bit fixed-point path ----------
+function gaussKernelFixed(n, sigma) {
+  const s = sigma > 0 ? sigma : n * 0.15 + 0.35, scale2X = -0.125 / (s * s), n2 = (n - 1) >> 1;
+  const vals = []; let sum = 0;
+  for (let i = 0, x = 1 - n; i < n2; i++, x += 2) { const t = Math.exp(x * x * scale2X); vals.push(t); sum += t; }
+  sum = sum * 2 + 1;
+  const k = new Int32Array(n); let err = 0, acc = 0;
+  for (let i = 0; i < n2; i++) {
+    const adj = vals[i] / sum * 256 + err, v = roundEven(adj);
+    err = adj - v; k[i] = k[n - 1 - i] = v; acc += v;
+  }
+  k[n2] = 256 - 2 * acc;
+  return k;
+}
+function gaussianBlur(src, W, H, n, sigma) {
+  const k = gaussKernelFixed(n, sigma), r = n >> 1;
+  const tmp = new Int32Array(W * H), out = new Uint8Array(W * H);
+  const xo = new Int32Array(W + 2 * r);
+  for (let x = -r; x < W + r; x++) xo[x + r] = refl101(x, W);
+  for (let y = 0; y < H; y++) {
+    const row = y * W;
+    for (let x = 0; x < W; x++) { let s = 0; for (let j = 0; j < n; j++) s += k[j] * src[row + xo[x + j]]; tmp[row + x] = s; }
+  }
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      let s = 0;
+      for (let i = 0; i < n; i++) s += k[i] * tmp[refl101(y + i - r, H) * W + x];
+      const v = (s + 32768) >> 16;
+      out[y * W + x] = v > 255 ? 255 : v;
+    }
+  }
+  return out;
+}
+
+// ---------- cv2.medianBlur (border replicate), sliding histogram ----------
+function medianBlur(src, W, H, n) {
+  const r = n >> 1, rank = (n * n - 1) >> 1, out = new Uint8Array(W * H), hist = new Int32Array(256);
+  for (let y = 0; y < H; y++) {
+    hist.fill(0);
+    const rows = []; for (let i = -r; i <= r; i++) rows.push(clampI(y + i, H) * W);
+    for (const ro of rows) for (let j = -r; j <= r; j++) hist[src[ro + clampI(j, W)]]++;
+    let m = 0, lt = 0;
+    while (lt + hist[m] <= rank) { lt += hist[m]; m++; }
+    out[y * W] = m;
+    for (let x = 1; x < W; x++) {
+      const xr = clampI(x - r - 1, W), xa = clampI(x + r, W);
+      for (const ro of rows) {
+        const vr = src[ro + xr], va = src[ro + xa];
+        hist[vr]--; if (vr < m) lt--;
+        hist[va]++; if (va < m) lt++;
+      }
+      while (lt > rank) { m--; lt -= hist[m]; }
+      while (lt + hist[m] <= rank) { lt += hist[m]; m++; }
+      out[y * W + x] = m;
+    }
+  }
+  return out;
+}
+
+// ---------- cv2.bilateralFilter (8-bit, 1 channel) ----------
+function bilateral(src, W, H, d, sc, ss) {
+  if (sc <= 0) sc = 1; if (ss <= 0) ss = 1;
+  const radius = d <= 0 ? Math.round(ss * 1.5) : d >> 1;
+  const cc = -0.5 / (sc * sc), scf = -0.5 / (ss * ss);
+  const ctab = new Float32Array(256); for (let i = 0; i < 256; i++) ctab[i] = Math.exp(i * i * cc);
+  const dy = [], dx = [], sw = [];
+  for (let i = -radius; i <= radius; i++) for (let j = -radius; j <= radius; j++) {
+    const rr = Math.sqrt(i * i + j * j); if (rr > radius) continue;
+    dy.push(i); dx.push(j); sw.push(Math.fround(Math.exp(rr * rr * scf)));
+  }
+  const K = sw.length, PW = W + 2 * radius, PH = H + 2 * radius, pad = new Uint8Array(PW * PH);
+  for (let y = 0; y < PH; y++) { const sy = refl101(y - radius, H) * W; for (let x = 0; x < PW; x++) pad[y * PW + x] = src[sy + refl101(x - radius, W)]; }
+  const ofs = new Int32Array(K); for (let k = 0; k < K; k++) ofs[k] = dy[k] * PW + dx[k];
+  const out = new Uint8Array(W * H);
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const p = (y + radius) * PW + x + radius, v0 = pad[p];
+      let sum = 0, wsum = 0;
+      for (let k = 0; k < K; k++) { const v = pad[p + ofs[k]], w = sw[k] * ctab[v > v0 ? v - v0 : v0 - v]; sum += v * w; wsum += w; }
+      out[y * W + x] = roundEven(sum / wsum);
+    }
+  }
+  return out;
+}
+
+// ---------- metrics ----------
+function psnr(a, b, mask) {
+  let s = 0, n = 0;
+  for (let i = 0; i < a.length; i++) { if (mask && !mask[i]) continue; const d = a[i] - b[i]; s += d * d; n++; }
+  return s === 0 ? Infinity : 10 * Math.log10(255 * 255 / (s / n));
+}
+// 7x7 uniform-window mean with scipy "reflect" borders
+function boxMean(f, W, H, r) {
+  const k = 2 * r + 1, tmp = new Float64Array(W * H), out = new Float64Array(W * H);
+  for (let y = 0; y < H; y++) {
+    const row = y * W; let s = 0;
+    for (let j = -r; j <= r; j++) s += f(row + reflSym(j, W));
+    for (let x = 0; x < W; x++) { tmp[row + x] = s; s += f(row + reflSym(x + r + 1, W)) - f(row + reflSym(x - r, W)); }
+  }
+  for (let x = 0; x < W; x++) {
+    let s = 0;
+    for (let i = -r; i <= r; i++) s += tmp[reflSym(i, H) * W + x];
+    for (let y = 0; y < H; y++) { out[y * W + x] = s / (k * k); s += tmp[reflSym(y + r + 1, H) * W + x] - tmp[reflSym(y - r, H) * W + x]; }
+  }
+  return out;
+}
+let refStats = null;
+function ssim(a, b, W, H) {
+  const r = 3, cn = 49 / 48, C1 = (0.01 * 255) ** 2, C2 = (0.03 * 255) ** 2;
+  if (!refStats || refStats.a !== a) refStats = { a, ux: boxMean(i => a[i], W, H, r), uxx: boxMean(i => a[i] * a[i], W, H, r) };
+  const { ux, uxx } = refStats;
+  const uy = boxMean(i => b[i], W, H, r), uyy = boxMean(i => b[i] * b[i], W, H, r), uxy = boxMean(i => a[i] * b[i], W, H, r);
+  let s = 0, n = 0;
+  for (let y = r; y < H - r; y++) for (let x = r; x < W - r; x++) {
+    const i = y * W + x, mx = ux[i], my = uy[i];
+    const vx = cn * (uxx[i] - mx * mx), vy = cn * (uyy[i] - my * my), vxy = cn * (uxy[i] - mx * my);
+    s += ((2 * mx * my + C1) * (2 * vxy + C2)) / ((mx * mx + my * my + C1) * (vx + vy + C2)); n++;
+  }
+  return s / n;
+}
+function percentile(sorted, q) {
+  const pos = q / 100 * (sorted.length - 1), lo = Math.floor(pos), hi = Math.min(lo + 1, sorted.length - 1);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}
+// Sobel magnitude on the clean image; detail = top 20 %, flat = bottom 50 %
+function regions(img, W, H) {
+  const g = new Float64Array(W * H), at = (y, x) => img[refl101(y, H) * W + refl101(x, W)];
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const sx = at(y - 1, x + 1) + 2 * at(y, x + 1) + at(y + 1, x + 1) - at(y - 1, x - 1) - 2 * at(y, x - 1) - at(y + 1, x - 1);
+    const sy = at(y + 1, x - 1) + 2 * at(y + 1, x) + at(y + 1, x + 1) - at(y - 1, x - 1) - 2 * at(y - 1, x) - at(y - 1, x + 1);
+    g[y * W + x] = Math.hypot(sx, sy);
+  }
+  const sorted = Float64Array.from(g).sort(), t80 = percentile(sorted, 80), t50 = percentile(sorted, 50);
+  const code = new Uint8Array(W * H), detail = new Uint8Array(W * H), flat = new Uint8Array(W * H);
+  for (let i = 0; i < g.length; i++) {
+    if (g[i] >= t80) { detail[i] = 1; code[i] = 1; }
+    if (g[i] <= t50) { flat[i] = 1; code[i] = 2; }
+  }
+  return { code, detail, flat };
+}
+
+// ---------- job runner with caching ----------
+let img = null, W = 0, H = 0, reg = null;
+const cache = {};
+const METHODS = ['gauss', 'median', 'bilateral'];
+self.onmessage = e => {
+  const m = e.data;
+  if (m.type === 'image') {
+    img = m.gray; W = m.w; H = m.h; reg = regions(img, W, H);
+    for (const k in cache) delete cache[k];
+    refStats = null;
+    self.postMessage({ type: 'regions', code: reg.code.slice() });
+    return;
+  }
+  const t0 = performance.now(), images = {}, metrics = {};
+  const nKey = m.sigma + '|' + m.seed;
+  if (!cache.noisy || cache.noisy.key !== nKey) cache.noisy = { key: nKey, data: addNoise(img, m.sigma, m.seed) };
+  const noisy = cache.noisy.data;
+  const run = {
+    gauss: () => gaussianBlur(noisy, W, H, m.p.gk, m.p.gs),
+    median: () => medianBlur(noisy, W, H, m.p.mk),
+    bilateral: () => bilateral(noisy, W, H, m.p.bd, m.p.bc, m.p.bs),
+  };
+  const keys = { gauss: [m.p.gk, m.p.gs], median: [m.p.mk], bilateral: [m.p.bd, m.p.bc, m.p.bs] };
+  const all = [['noisy', noisy]];
+  for (const id of METHODS) {
+    const key = nKey + '|' + keys[id].join(',');
+    if (!cache[id] || cache[id].key !== key) { cache[id] = { key, data: run[id](), m: null }; images[id] = cache[id].data.slice(); }
+    all.push([id, cache[id].data]);
+  }
+  if (m.sendNoisy || !cache.noisySent || cache.noisySent !== nKey) { images.noisy = noisy.slice(); cache.noisySent = nKey; }
+  for (const [id, out] of all) {
+    const c = id === 'noisy' ? cache.noisy : cache[id];
+    if (!c.m) c.m = { psnr: psnr(img, out), ssim: ssim(img, out, W, H), detail: psnr(img, out, reg.detail), flat: psnr(img, out, reg.flat) };
+    metrics[id] = c.m;
+  }
+  self.postMessage({ type: 'result', id: m.id, images, metrics, ms: performance.now() - t0 }, Object.values(images).map(a => a.buffer));
+};
+</script>
+
+<script>
+'use strict';
+const DEFAULTS = { sigma: 25, seed: 0, gk: 5, gs: 1.0, mk: 5, bd: 9, bc: 75, bs: 75 };
+const state = { ...DEFAULTS };
+// 原实验结果（Python：OpenCV 5.0 + scikit-image 0.26），见 results/metrics.csv
+const PY = {
+  noisy: { psnr: 20.26, ssim: 0.322, detail: 20.22, flat: 20.29 },
+  gauss: { psnr: 29.98, ssim: 0.781, detail: 28.37, flat: 30.71 },
+  median: { psnr: 29.56, ssim: 0.785, detail: 27.03, flat: 31.13 },
+  bilateral: { psnr: 29.90, ssim: 0.821, detail: 26.85, flat: 32.35 },
+};
+const NAMES = { color: '彩色原片', clean: '灰度原图', noisy: '加噪图', gauss: '高斯滤波', median: '中值滤波', bilateral: '双边滤波', regions: '区域划分' };
+const ROWS = ['noisy', 'gauss', 'median', 'bilateral'];
+const $ = id => document.getElementById(id);
+
+/* ---------- worker ---------- */
+const worker = new Worker(URL.createObjectURL(new Blob([$('worker-src').textContent], { type: 'text/javascript' })));
+let W = 0, H = 0, isCanna = true, jobId = 0, pending = false, running = false;
+const gray = {};          // id -> Uint8Array
+let metrics = null, colorSrc = null;
+
+worker.onmessage = e => {
+  const m = e.data;
+  if (m.type === 'regions') { gray.regions = m.code; invalidate('regions'); return; }
+  running = false;
+  Object.assign(gray, m.images);
+  Object.keys(m.images).forEach(invalidate);
+  metrics = m.metrics;
+  $('status').textContent = `用时 ${(m.ms / 1000).toFixed(2)} s`;
+  drawViewer(); drawTable();
+  if (pending) { pending = false; run(); } else $('busy').classList.remove('on');
+};
+function run() {
+  if (!W) return;
+  if (running) { pending = true; return; }
+  running = true;
+  $('busy').classList.add('on');
+  $('status').textContent = '计算中…';
+  worker.postMessage({ type: 'run', id: ++jobId, sigma: state.sigma, seed: state.seed, p: { gk: state.gk, gs: state.gs, mk: state.mk, bd: state.bd, bc: state.bc, bs: state.bs } });
+}
+let debounce;
+const schedule = () => { clearTimeout(debounce); debounce = setTimeout(run, 120); };
+
+/* ---------- loading images ---------- */
+function setImage(g, w, h, color) {
+  W = w; H = h; gray.clean = g; colorSrc = color;
+  for (const k of ['noisy', 'gauss', 'median', 'bilateral', 'regions']) delete gray[k];
+  Object.keys(canvases).forEach(invalidate);
+  $('imgInfo').textContent = `${w}×${h}${isCanna ? ' · my_photo.jpg' : ' · 你的照片'}`;
+  $('backCanna').hidden = isCanna;
+  worker.postMessage({ type: 'image', gray: g.slice(), w, h });
+  sizeStage(); run();
+}
+function loadImage(url) {
+  return new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = rej; im.src = url; });
+}
+async function loadCanna() {
+  isCanna = true;
+  const [g, c] = await Promise.all([loadImage('canna_gray.png'), loadImage('my_photo.jpg')]);
+  const cv = document.createElement('canvas'); cv.width = g.naturalWidth; cv.height = g.naturalHeight;
+  const ctx = cv.getContext('2d'); ctx.drawImage(g, 0, 0);
+  const d = ctx.getImageData(0, 0, cv.width, cv.height).data, out = new Uint8Array(cv.width * cv.height);
+  for (let i = 0; i < out.length; i++) out[i] = d[i * 4];
+  setImage(out, cv.width, cv.height, c);
+}
+// cv2.cvtColor(BGR2GRAY) fixed point: (R*4899 + G*9617 + B*1868 + 8192) >> 14
+async function loadFile(file) {
+  const bmp = await createImageBitmap(file);
+  const s = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+  const w = Math.round(bmp.width * s), h = Math.round(bmp.height * s);
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d'); ctx.drawImage(bmp, 0, 0, w, h);
+  const d = ctx.getImageData(0, 0, w, h).data, out = new Uint8Array(w * h);
+  for (let i = 0; i < out.length; i++) out[i] = (d[i * 4] * 4899 + d[i * 4 + 1] * 9617 + d[i * 4 + 2] * 1868 + 8192) >> 14;
+  isCanna = false;
+  setImage(out, w, h, cv);
+}
+$('file').addEventListener('change', e => { const f = e.target.files[0]; if (f) loadFile(f).catch(() => alert('这张图片读不了，换一张试试。')); e.target.value = ''; });
+$('backCanna').addEventListener('click', loadCanna);
+
+/* ---------- viewer ---------- */
+const view = { L: 'noisy', R: 'bilateral', zoom: 1, split: 50 };
+const canvases = {};      // id -> offscreen canvas with the rendered image
+function invalidate(id) { delete canvases[id]; }
+function css(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function render(id) {
+  if (canvases[id]) return canvases[id];
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  if (id === 'color') { if (!colorSrc) return null; ctx.drawImage(colorSrc, 0, 0, W, H); return (canvases[id] = cv); }
+  const src = id === 'regions' ? gray.clean : gray[id];
+  if (!src) return null;
+  const im = ctx.createImageData(W, H), d = im.data;
+  if (id === 'regions') {
+    if (!gray.regions) return null;
+    const hex = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+    const det = hex(css('--detail').length === 7 ? css('--detail') : '#e0472b'), fl = hex(css('--flat').length === 7 ? css('--flat') : '#2f6fd0');
+    for (let i = 0; i < src.length; i++) {
+      const g = src[i] * 0.55 + 40, c = gray.regions[i], o = i * 4;
+      const col = c === 1 ? det : c === 2 ? fl : null;
+      d[o] = col ? col[0] * 0.75 + g * 0.25 : g; d[o + 1] = col ? col[1] * 0.75 + g * 0.25 : g; d[o + 2] = col ? col[2] * 0.75 + g * 0.25 : g; d[o + 3] = 255;
+    }
+  } else {
+    for (let i = 0; i < src.length; i++) { const o = i * 4; d[o] = d[o + 1] = d[o + 2] = src[i]; d[o + 3] = 255; }
+  }
+  ctx.putImageData(im, 0, 0);
+  return (canvases[id] = cv);
+}
+function paint(c, id) {
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const ctx = c.getContext('2d'), src = render(id);
+  if (src) ctx.drawImage(src, 0, 0); else { ctx.fillStyle = css('--surface-2'); ctx.fillRect(0, 0, W, H); }
+}
+function drawViewer() {
+  if (!W) return;
+  paint($('cL'), view.L); paint($('cR'), view.R);
+  $('cR').style.clipPath = `inset(0 0 0 ${view.split}%)`;
+  $('divider').style.left = view.split + '%';
+  $('tagL').textContent = NAMES[view.L]; $('tagR').textContent = NAMES[view.R];
+  $('regionLegend').hidden = view.L !== 'regions' && view.R !== 'regions';
+  $('split').value = view.split;
+  document.querySelectorAll('#tbody tr').forEach(tr => tr.classList.toggle('sel', tr.dataset.id === view.R));
+}
+function sizeStage() {
+  $('stage').style.width = view.zoom * 100 + '%';
+  $('stage').classList.toggle('pixel', view.zoom >= 4);
+}
+for (const s of ['selL', 'selR']) {
+  $(s).innerHTML = Object.entries(NAMES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+  $(s).addEventListener('change', e => { view[s === 'selL' ? 'L' : 'R'] = e.target.value; drawViewer(); });
+}
+$('selL').value = view.L; $('selR').value = view.R;
+const zoomSeg = $('zoomSeg');
+const syncZoom = () => zoomSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', +b.dataset.v === view.zoom));
+zoomSeg.addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const vp = $('viewport'), cx = (vp.scrollLeft + vp.clientWidth / 2) / vp.scrollWidth, cy = (vp.scrollTop + vp.clientHeight / 2) / vp.scrollHeight;
+  view.zoom = +b.dataset.v; syncZoom(); sizeStage();
+  vp.scrollLeft = cx * vp.scrollWidth - vp.clientWidth / 2; vp.scrollTop = cy * vp.scrollHeight - vp.clientHeight / 2;
+});
+syncZoom();
+$('split').addEventListener('input', e => { view.split = +e.target.value; drawViewer(); });
+const knob = $('knob');
+knob.addEventListener('pointerdown', e => {
+  knob.setPointerCapture(e.pointerId);
+  const move = ev => { const r = $('stage').getBoundingClientRect(); view.split = Math.max(0, Math.min(100, (ev.clientX - r.left) / r.width * 100)); drawViewer(); };
+  const up = () => { knob.removeEventListener('pointermove', move); knob.removeEventListener('pointerup', up); knob.removeEventListener('pointercancel', up); };
+  knob.addEventListener('pointermove', move); knob.addEventListener('pointerup', up); knob.addEventListener('pointercancel', up);
+});
+
+/* ---------- controls ---------- */
+const PARAMS = {
+  pGauss: [
+    { id: 'gk', label: '高斯 核大小', min: 3, max: 15, step: 2, fmt: v => `${v}×${v}` },
+    { id: 'gs', label: '高斯 σ', min: 0.3, max: 5, step: 0.1, fmt: v => (+v).toFixed(1) },
+  ],
+  pMedian: [{ id: 'mk', label: '中值 核大小', min: 3, max: 15, step: 2, fmt: v => `${v}×${v}` }],
+  pBilateral: [
+    { id: 'bd', label: '双边 邻域直径 d', min: 3, max: 15, step: 2, fmt: v => v },
+    { id: 'bc', label: '双边 σColor', min: 5, max: 150, step: 5, fmt: v => v },
+    { id: 'bs', label: '双边 σSpace', min: 5, max: 150, step: 5, fmt: v => v },
+  ],
+};
+const syncs = [];
+for (const [box, list] of Object.entries(PARAMS)) {
+  for (const p of list) {
+    const wrap = document.createElement('div'); wrap.className = 'ctl';
+    wrap.innerHTML = `<label for="${p.id}">${p.label} <output></output></label><input type="range" id="${p.id}" min="${p.min}" max="${p.max}" step="${p.step}">`;
+    const inp = wrap.querySelector('input'), out = wrap.querySelector('output');
+    const sync = () => { inp.value = state[p.id]; out.textContent = p.fmt(state[p.id]); };
+    inp.addEventListener('input', () => { state[p.id] = +inp.value; out.textContent = p.fmt(state[p.id]); schedule(); });
+    sync(); syncs.push(sync);
+    $(box).appendChild(wrap);
+  }
+}
+const syncSigma = () => { $('sigma').value = state.sigma; $('sigmaOut').textContent = state.sigma; $('seed').value = state.seed; };
+$('sigma').addEventListener('input', e => { state.sigma = +e.target.value; $('sigmaOut').textContent = state.sigma; schedule(); });
+$('seed').addEventListener('change', e => { const v = Math.max(0, Math.min(4294967295, Math.floor(+e.target.value || 0))); state.seed = v; e.target.value = v; schedule(); });
+syncSigma();
+function applyState(s) { Object.assign(state, s); syncSigma(); syncs.forEach(f => f()); schedule(); }
+$('resetParams').addEventListener('click', () => applyState(DEFAULTS));
+
+/* ---------- table ---------- */
+const isDefault = () => isCanna && Object.keys(DEFAULTS).every(k => state[k] === DEFAULTS[k]);
+const fmt = (v, d) => v === Infinity ? '∞' : v.toFixed(d);
+function drawTable() {
+  if (!metrics) return;
+  const cols = [['psnr', 2], ['ssim', 3], ['detail', 2], ['flat', 2]];
+  const best = {};
+  for (const [c] of cols) best[c] = ['gauss', 'median', 'bilateral'].reduce((a, b) => metrics[b][c] > metrics[a][c] ? b : a);
+  const showPy = isDefault();
+  $('tbody').innerHTML = ROWS.map(id => `<tr data-id="${id}"><td>${NAMES[id]}</td>${cols.map(([c, d]) =>
+    `<td class="num${best[c] === id ? ' best' : ''}">${fmt(metrics[id][c], d)}${showPy ? `<span class="py">Python ${PY[id][c].toFixed(d)}</span>` : ''}</td>`).join('')}</tr>`).join('');
+  if (showPy) {
+    const same = ROWS.every(id => cols.every(([c, d]) => fmt(metrics[id][c], d) === PY[id][c].toFixed(d)));
+    $('pyNote').innerHTML = same ? '<span class="ok">✓ 与原实验的 Python 结果完全一致。</span>' : '网页结果与 Python 原结果略有差异（灰色小字为 Python 结果）。';
+  } else {
+    $('pyNote').textContent = isCanna ? '参数已修改。点“恢复实验参数”可回到原实验设置并与 Python 结果对照。' : '这是你自己的照片，没有 Python 对照结果。';
+  }
+  drawViewer();
+}
+$('tbody').addEventListener('click', e => {
+  const tr = e.target.closest('tr'); if (!tr) return;
+  view.R = tr.dataset.id; $('selR').value = view.R; drawViewer();
+});
+
+/* ---------- findings ---------- */
+const FINDINGS = [
+  { t: '加噪图', d: '全图密集颗粒，花瓣纹路与石板裂缝被噪点淹没。', v: { L: 'clean', R: 'noisy', zoom: 2 } },
+  { t: '高斯滤波', d: 'PSNR 最高、细节区最好；残留细颗粒，花瓣纹路依稀可见，整体略发虚。', v: { L: 'noisy', R: 'gauss', zoom: 2 } },
+  { t: '中值滤波', d: '噪点被压成斑块，花瓣细纹基本消失。', v: { L: 'gauss', R: 'median', zoom: 4 } },
+  { t: '双边滤波', d: 'SSIM 最高、平坦区最干净，但花瓣斑点与纹理被抹平，有“塑料感”。', v: { L: 'gauss', R: 'bilateral', zoom: 4 } },
+  { t: '细节区和平坦区', d: '用 Sobel 梯度划分：梯度最大的 20% 像素算细节区，最小的 50% 算平坦区。', v: { L: 'clean', R: 'regions', zoom: 1 } },
+];
+$('findings').innerHTML = FINDINGS.map((f, i) => `<div class="finding"><h3>${f.t}</h3><p>${f.d}</p><button class="btn" data-i="${i}">在上面对比</button></div>`).join('');
+$('findings').addEventListener('click', e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const v = FINDINGS[+b.dataset.i].v;
+  view.L = v.L; view.R = v.R; view.zoom = v.zoom; view.split = 50;
+  $('selL').value = v.L; $('selR').value = v.R; syncZoom(); sizeStage(); drawViewer();
+  const vp = $('viewport');
+  // 对准下方那朵花
+  vp.scrollLeft = 0.33 * vp.scrollWidth - vp.clientWidth / 2; vp.scrollTop = 0.72 * vp.scrollHeight - vp.clientHeight / 2;
+  vp.scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+});
+
+/* ---------- python code ---------- */
+const PY_SRC = `import cv2
+import numpy as np
+from skimage.metrics import peak_signal_noise_ratio as psnr
+from skimage.metrics import structural_similarity as ssim
+
+# 1. 读图，换成你的手机夜景照片也可以，记得转灰度
+img = cv2.imread('my_photo.jpg', cv2.IMREAD_GRAYSCALE)
+
+# 2. 加高斯噪声 sigma=25
+np.random.seed(0)
+noise = np.random.normal(0, 25, img.shape)
+noisy = np.clip(img.astype(np.float32) + noise, 0, 255).astype(np.uint8)
+
+# 3. 三种降噪
+gauss = cv2.GaussianBlur(noisy, (5, 5), 1.0)
+median = cv2.medianBlur(noisy, 5)
+bilateral = cv2.bilateralFilter(noisy, 9, 75, 75)
+
+# 4. 输出指标
+for name, out in [('Noisy', noisy), ('Gaussian', gauss), ('Median', median), ('Bilateral', bilateral)]:
+    print(name, psnr(img, out, data_range=255), ssim(img, out, data_range=255))`;
+$('pyCode').textContent = PY_SRC;
+document.querySelectorAll('.copy').forEach(b => b.addEventListener('click', () => {
+  const pre = $(b.dataset.target);
+  const done = () => { b.textContent = '已复制'; setTimeout(() => b.textContent = '复制', 1500); };
+  const fallback = () => { const r = document.createRange(); r.selectNodeContents(pre); const s = getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = '已选中，请手动复制'; setTimeout(() => b.textContent = '复制', 2500); };
+  try { navigator.clipboard.writeText(pre.textContent).then(done, fallback); } catch (e) { fallback(); }
+}));
+
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { invalidate('regions'); drawViewer(); });
+loadCanna().catch(() => { $('status').textContent = '照片加载失败：请通过网址（GitHub Pages 或本地服务器）打开，而不是直接双击文件。'; });
+</script>
+</body>
+</html>
